@@ -1,0 +1,46 @@
+# 简单数据集配置文件示例 - 使用负采样评估
+# 适用于只有user_id, item_id, timestamp的.inter文件
+# 针对大规模数据集优化，使用负采样而非full sort
+
+# 基本字段配置
+USER_ID_FIELD: user_id
+ITEM_ID_FIELD: item_id
+TIME_FIELD: timestamp
+field_separator: "\t"  # Tab分隔符
+
+# 加载配置
+load_col:
+  inter: [user_id, item_id, timestamp]
+
+# 序列长度配置
+MAX_ITEM_LIST_LENGTH: 20  # 限制交互序列最大长度为20
+
+# 数据过滤配置
+user_inter_num_interval: '[5,inf)'  # 过滤交互少于5次的用户
+item_inter_num_interval: '[5,inf)'  # 过滤交互少于5次的物品
+rm_dup_inter: ~  # 不删除重复交互
+
+# 训练配置
+epochs: 100
+train_batch_size: 2048
+learning_rate: 0.001
+train_neg_sample_args:
+  distribution: uniform
+  sample_num: 1
+
+# 评估配置 - 使用负采样
+eval_args:
+  split: {'RS': [0.8, 0.1, 0.1]}  # 随机划分 8:1:1
+  group_by: user
+  order: TO  # 按时间排序
+  mode: uni100  # 使用uniform负采样，每个正样本配99个负样本
+
+eval_batch_size: 2048  # 负采样模式下可以使用更大的batch size
+
+metrics: ['Recall', 'NDCG', 'Hit', 'Precision', 'MRR']
+topk: [10, 20, 50]
+valid_metric: NDCG@10
+
+# GPU配置
+gpu_id: 6
+use_gpu: True

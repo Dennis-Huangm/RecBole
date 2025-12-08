@@ -24,6 +24,13 @@ import pandas as pd
 import torch
 import torch.nn.utils.rnn as rnn_utils
 from scipy.sparse import coo_matrix
+from tqdm import tqdm
+
+try:
+    import polars as pl
+    POLARS_AVAILABLE = True
+except ImportError:
+    POLARS_AVAILABLE = False
 from recbole.data.interaction import Interaction
 from recbole.utils import (
     FeatureSource,
@@ -483,15 +490,49 @@ class Dataset(torch.utils.data.Dataset):
             self.logger.warning(f"No columns has been loaded from [{source}]")
             return None
 
-        df = pd.read_csv(
-            filepath,
-            delimiter=field_separator,
-            usecols=usecols,
-            dtype=dtype,
-            encoding=encoding,
-            engine="python",
-        )
-        df.columns = columns
+        # 使用 polars 加速大文件读取（如果可用）
+        use_polars_config = self.config["use_polars"] if "use_polars" in self.config.final_config_dict else True
+        use_polars = POLARS_AVAILABLE and use_polars_config
+        
+        if use_polars:
+            try:
+                self.logger.debug(set_color("Using Polars for faster CSV reading", "yellow"))
+                # 构建 polars 的 dtype 映射
+                pl_dtypes = {}
+                for field_type in usecols:
+                    field = field_type.split(":")[0]
+                    if dtype[field_type] == np.float64:
+                        pl_dtypes[field_type] = pl.Float64
+                    else:
+                        pl_dtypes[field_type] = pl.Utf8
+                
+                # 使用 polars 读取（非常快）
+                df_pl = pl.read_csv(
+                    filepath,
+                    separator=field_separator,
+                    columns=usecols,
+                    dtypes=pl_dtypes,
+                    encoding=encoding,
+                    low_memory=False,
+                )
+                # 转换为 pandas（后续代码依赖 pandas）
+                df = df_pl.to_pandas()
+                df.columns = columns
+            except Exception as e:
+                self.logger.warning(f"Polars reading failed ({e}), fallback to pandas")
+                use_polars = False
+        
+        if not use_polars:
+            # 原始 pandas 方式（保持兼容性）
+            df = pd.read_csv(
+                filepath,
+                delimiter=field_separator,
+                usecols=usecols,
+                dtype=dtype,
+                encoding=encoding,
+                engine="python",
+            )
+            df.columns = columns
 
         seq_separator = self.config["seq_separator"]
         for field in columns:
@@ -900,7 +941,14 @@ class Dataset(torch.utils.data.Dataset):
             else Counter()
         )
 
+        iteration = 0
+        progress_bar = tqdm(
+            desc="K-core filtering",
+            bar_format="{desc}: {n} iterations | {postfix}",
+        )
+
         while True:
+            iteration += 1
             ban_users = self._get_illegal_ids_by_inter_num(
                 field=self.uid_field,
                 feat=self.user_feat,
@@ -937,6 +985,21 @@ class Dataset(torch.utils.data.Dataset):
             dropped_index = self.inter_feat.index[dropped_inter]
             self.logger.debug(f"[{len(dropped_index)}] dropped interactions.")
             self.inter_feat.drop(dropped_index, inplace=True)
+
+            # 更新进度条
+            progress_bar.update(1)
+            progress_bar.set_postfix({
+                "users_removed": len(ban_users),
+                "items_removed": len(ban_items),
+                "interactions_dropped": len(dropped_index),
+                "remaining_interactions": len(self.inter_feat)
+            })
+
+        progress_bar.close()
+        self.logger.info(
+            f"K-core filtering completed in {iteration} iterations. "
+            f"Remaining interactions: {len(self.inter_feat)}"
+        )
 
     def _get_illegal_ids_by_inter_num(
         self, field, feat, inter_num, inter_interval=None
@@ -1590,7 +1653,14 @@ class Dataset(torch.utils.data.Dataset):
 
     def _grouped_index(self, group_by_list):
         index = {}
-        for i, key in enumerate(group_by_list):
+        total = len(group_by_list)
+        # Add progress bar for large datasets
+        iterator = enumerate(group_by_list)
+        if total > 10000:
+            self.logger.info(f"Grouping {total} interactions...")
+            iterator = tqdm(iterator, total=total, desc="Grouping data", disable=total < 100000)
+        
+        for i, key in iterator:
             if key not in index:
                 index[key] = [i]
             else:
@@ -1702,6 +1772,7 @@ class Dataset(torch.utils.data.Dataset):
         if group_by is None:
             raise ValueError("leave one out strategy require a group field")
 
+        self.logger.info(f"Splitting dataset using leave-one-out strategy (mode: {leave_one_mode})...")
         grouped_inter_feat_index = self._grouped_index(
             self.inter_feat[group_by].numpy()
         )
@@ -1761,7 +1832,15 @@ class Dataset(torch.utils.data.Dataset):
             self.inter_feat[group_by].numpy()
         )
 
-        for grouped_index in grouped_inter_feat_index:
+        num_groups = len(list(grouped_inter_feat_index))
+        grouped_inter_feat_index = list(grouped_inter_feat_index)  # Convert to list for iteration
+        self.logger.info(f"Processing {num_groups} groups for time-based splitting...")
+        
+        iterator = grouped_inter_feat_index
+        if num_groups > 1000:
+            iterator = tqdm(iterator, desc="Processing groups", total=num_groups)
+        
+        for grouped_index in iterator:
             grouped_index = np.array(grouped_index)
             grouped_inter_feat = self.inter_feat[grouped_index]
             grouped_inter_feat.sort(by=self.time_field)
