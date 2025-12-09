@@ -11,15 +11,12 @@ def resume_training():
     
     # 1. 配置参数（与原始训练保持一致）
     parameter_dict = {
-        'train_neg_sample_args': None,
-        'checkpoint_dir': 'saved',  # checkpoint保存目录
-        'gpu_id': 0,  # 使用第7张GPU卡
-        'use_gpu': True,  # 启用GPU
+        'train_neg_sample_args': None
     }
     
     # 2. 初始化配置
     config = Config(
-        model='SASRec',
+        model='GRU4Rec',
         dataset='yambda',
         config_file_list=['configs/simple_dataset.yaml'],
         config_dict=parameter_dict
@@ -41,7 +38,7 @@ def resume_training():
     
     # 7. 加载checkpoint（重点！）
     # 替换为你实际的checkpoint路径
-    checkpoint_file = '/home/hongminjie/RecBole/saved/SASRec-Dec-09-2025_02-40-06.pth'  # 修改为实际路径
+    checkpoint_file = '/home/hongminjie/RecBole/saved/GRU4Rec-Dec-09-2025_02-39-25.pth'  # 修改为实际路径
     trainer.resume_checkpoint(checkpoint_file)
     
     # 8. 继续训练

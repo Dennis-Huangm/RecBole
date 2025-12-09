@@ -307,6 +307,8 @@ class SequentialDataset(Dataset):
         """Save augmented inter_feat to cache."""
         try:
             cache_path = self._get_cache_path()
+            # Ensure cache directory exists
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             self.logger.info(f"Saving augmented data to cache: {cache_path}")
             
             # Estimate cache size

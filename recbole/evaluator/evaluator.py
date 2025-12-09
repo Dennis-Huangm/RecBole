@@ -34,8 +34,12 @@ class Evaluator(object):
             collections.OrderedDict: such as ``{'hit@20': 0.3824, 'recall@20': 0.0527, 'hit@10': 0.3153, 'recall@10': 0.0329, 'gauc': 0.9236}``
 
         """
+        from logging import getLogger
+        logger = getLogger()
         result_dict = OrderedDict()
         for metric in self.metrics:
+            logger.info(f"Calculating metric: {metric}...")
             metric_val = self.metric_class[metric].calculate_metric(dataobject)
             result_dict.update(metric_val)
+            logger.info(f"Metric {metric} completed: {metric_val}")
         return result_dict
