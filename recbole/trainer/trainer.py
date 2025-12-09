@@ -320,7 +320,7 @@ class Trainer(AbstractTrainer):
         """
         resume_file = str(resume_file)
         self.saved_model_file = resume_file
-        checkpoint = torch.load(resume_file, map_location=self.device)
+        checkpoint = torch.load(resume_file, map_location=self.device, weights_only=False)
         self.start_epoch = checkpoint["epoch"] + 1
         self.cur_step = checkpoint["cur_step"]
         self.best_valid_score = checkpoint["best_valid_score"]
@@ -623,8 +623,12 @@ class Trainer(AbstractTrainer):
             )
         self.eval_collector.model_collect(self.model)
         struct = self.eval_collector.get_data_struct()
+        self.logger.info("Evaluation data collected. Starting metric calculation...")
         result = self.evaluator.evaluate(struct)
+        self.logger.info("Metric calculation completed.")
         if not self.config["single_spec"]:
+            # 添加同步屏障，确保所有rank都完成评估后再进行all_gather
+            torch.distributed.barrier()
             result = self._map_reduce(result, num_sample)
         self.wandblogger.log_eval_metrics(result, head="eval")
         return result
